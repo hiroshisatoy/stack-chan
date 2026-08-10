@@ -18,7 +18,7 @@ const FORECAST_URL =
   '&timezone=Asia%2FTokyo' +
   '&forecast_days=1'
 
-const GREETING = 'こんにちは。ぼくｽﾀｯｸﾁｬﾝ！'
+const BOOT_FORECAST_DELAY_MS = 4000
 
 function truncate(text, max = 48) {
   if (typeof text !== 'string') return ''
@@ -46,15 +46,15 @@ function describeWeather(code) {
 }
 
 function buildForecastSpeech(body) {
-  const current = body?.current
-  const daily = body?.daily
+  const current = body && body.current
+  const daily = body && body.daily
   if (current == null) throw new Error('missing current weather')
 
   const temperature = formatTemperature(current.temperature_2m)
   const weather = describeWeather(Number(current.weather_code))
-  const high = formatTemperature(daily?.temperature_2m_max?.[0])
-  const low = formatTemperature(daily?.temperature_2m_min?.[0])
-  const dailyWeather = describeWeather(Number(daily?.weather_code?.[0]))
+  const high = formatTemperature(daily && daily.temperature_2m_max && daily.temperature_2m_max[0])
+  const low = formatTemperature(daily && daily.temperature_2m_min && daily.temperature_2m_min[0])
+  const dailyWeather = describeWeather(Number(daily && daily.weather_code && daily.weather_code[0]))
 
   let text = `${LOCATION.name}の天気だよ。いまは${weather.label}`
   if (temperature != null) text += `で、気温は${temperature}度`
@@ -94,12 +94,19 @@ async function fetchAndSpeakForecast(robot) {
   }
 }
 
+function lookAroundOnce(robot) {
+  const motion = robot.motion
+  if (motion == null || typeof motion.lookAt !== 'function') return
+  const x = randomBetween(0.4, 1.0)
+  const y = randomBetween(-0.4, 0.4)
+  const z = randomBetween(-0.02, 0.2)
+  motion.lookAt([x, y, z])
+}
+
 export function onContextCreated(robot) {
-  let lookingAround = false
   let speaking = false
 
-  robot.motion.setTorque(true)
-
+  // ボタンの無い機種でも落ちないよう、物理ボタンは使わない
   async function withSpeechLock(task) {
     if (speaking) return
     speaking = true
@@ -110,41 +117,29 @@ export function onContextCreated(robot) {
     }
   }
 
-  // A: あいさつ
-  robot.input.button.a.onEvent = (event) => {
-    if (!event.pressed) return
-    withSpeechLock(async () => {
-      robot.face.setEmotion(Emotion.HAPPY)
-      await say(robot, GREETING)
-    }).catch((error) => trace(`[demo_combo] speech failed: ${error}\n`))
-  }
+  robot.ui.drawer.addDrawerButton({
+    key: 'demo-combo:forecast',
+    label: '天気',
+    callback(nextRobot) {
+      nextRobot.ui.closeDrawer()
+      withSpeechLock(() => fetchAndSpeakForecast(nextRobot)).catch((error) => {
+        speaking = false
+        trace(`[demo_combo] forecast task failed: ${error}\n`)
+      })
+    },
+  })
 
-  // B: あたりを見回すモーションの ON/OFF
-  robot.input.button.b.onEvent = (event) => {
-    if (!event.pressed) return
-    lookingAround = !lookingAround
-    if (!lookingAround) robot.motion.lookAway()
-    robot.ui.showBalloon(lookingAround ? '見回すよ' : '正面を向くよ')
-    Timer.set(() => robot.ui.hideBalloon(), 1500)
-  }
-
-  // C: Open-Meteo から東京の天気を取得してしゃべる
-  robot.input.button.c.onEvent = (event) => {
-    if (!event.pressed) return
+  // 起動後に一度だけ天気予報
+  Timer.set(() => {
     withSpeechLock(() => fetchAndSpeakForecast(robot)).catch((error) => {
       speaking = false
-      trace(`[demo_combo] forecast task failed: ${error}\n`)
+      trace(`[demo_combo] boot forecast failed: ${error}\n`)
     })
-  }
+  }, BOOT_FORECAST_DELAY_MS)
 
-  Timer.repeat(() => {
-    if (!lookingAround) return
-    const x = randomBetween(0.4, 1.0)
-    const y = randomBetween(-0.4, 0.4)
-    const z = randomBetween(-0.02, 0.2)
-    robot.motion.lookAt([x, y, z])
-  }, 5000)
+  // たまに視線を動かす（サーボが無い場合は何もしない）
+  Timer.repeat(() => lookAroundOnce(robot), 8000)
 
-  robot.ui.showBalloon('Cボタンで天気予報')
+  robot.ui.showBalloon('天気を調べる準備中')
   Timer.set(() => robot.ui.hideBalloon(), 2500)
 }
