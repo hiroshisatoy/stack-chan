@@ -21,8 +21,8 @@ async function fileFetch(url) {
 
 test('共通MOD定義からテキストとブロックのGalleryを構成する', async () => {
   const definitions = await loadModCatalog(catalogUrl, fileFetch)
-  assert.equal(definitions.length, 9)
-  assert.equal(definitions.filter((definition) => definition.type === 'text').length, 5)
+  assert.equal(definitions.length, 10)
+  assert.equal(definitions.filter((definition) => definition.type === 'text').length, 6)
   assert.equal(definitions.filter((definition) => definition.type === 'block').length, 4)
   assert.equal(definitions.filter((definition) => definition.entrypoints.includes('miniapp')).length, 1)
   assert.equal(new Set(definitions.map((definition) => definition.id)).size, definitions.length)
@@ -43,7 +43,7 @@ test('共通MOD定義からテキストとブロックのGalleryを構成する'
 test('テキストMODの成果物は既存の実行互換性を維持する', async () => {
   const definitions = await loadModCatalog(catalogUrl, fileFetch)
   const textMods = definitions.filter((definition) => definition.type === 'text')
-  assert.equal(textMods.length, 5)
+  assert.equal(textMods.length, 6)
   for (const definition of textMods) {
     assert.equal(definition.artifacts.length, 1, `${definition.id}: installable text MOD should include one artifact`)
     const archive = readFileSync(definition.artifacts[0].url)
@@ -81,6 +81,18 @@ test('MediaPipe GalleryパッケージはFirmwareサンプルと同じ実行ソ�
 test('MCP GalleryパッケージはFirmwareサンプルと同じ実行ソースを公開する', () => {
   const firmware = new URL('../../firmware/mods/examples/mcp/', import.meta.url)
   const gallery = new URL('./samples/mcp/mod/', import.meta.url)
+  for (const filename of ['manifest.json', 'mod.js']) {
+    assert.equal(
+      readFileSync(new URL(filename, gallery), 'utf8'),
+      readFileSync(new URL(filename, firmware), 'utf8'),
+      `${filename} should not drift between the firmware example and gallery package`
+    )
+  }
+})
+
+test('demo-combo GalleryパッケージはFirmwareサンプルと同じ実行ソースを公開する', () => {
+  const firmware = new URL('../../firmware/mods/examples/demo_combo/', import.meta.url)
+  const gallery = new URL('./samples/demo-combo/mod/', import.meta.url)
   for (const filename of ['manifest.json', 'mod.js']) {
     assert.equal(
       readFileSync(new URL(filename, gallery), 'utf8'),
