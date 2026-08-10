@@ -18,7 +18,8 @@ const FORECAST_URL =
   '&timezone=Asia%2FTokyo' +
   '&forecast_days=1'
 
-const BOOT_FORECAST_DELAY_MS = 4000
+const BOOT_DRAWER_DELAY_MS = 2500
+const BOOT_FORECAST_DELAY_MS = 5000
 
 function truncate(text, max = 48) {
   if (typeof text !== 'string') return ''
@@ -68,6 +69,14 @@ function buildForecastSpeech(body) {
   }
 }
 
+function openDrawerSafely(robot) {
+  try {
+    robot.ui.openDrawer()
+  } catch (error) {
+    trace(`[demo_combo] openDrawer failed: ${error}\n`)
+  }
+}
+
 async function say(robot, text) {
   robot.ui.showBalloon(truncate(text))
   try {
@@ -106,7 +115,6 @@ function lookAroundOnce(robot) {
 export function onContextCreated(robot) {
   let speaking = false
 
-  // ボタンの無い機種でも落ちないよう、物理ボタンは使わない
   async function withSpeechLock(task) {
     if (speaking) return
     speaking = true
@@ -117,7 +125,8 @@ export function onContextCreated(robot) {
     }
   }
 
-  robot.ui.drawer.addDrawerButton({
+  // host と同じ drawer API を使う（callback 付き）
+  robot.drawer.addDrawerButton({
     key: 'demo-combo:forecast',
     label: '天気',
     callback(nextRobot) {
@@ -129,17 +138,22 @@ export function onContextCreated(robot) {
     },
   })
 
+  // 右上メニューが無反応でも使えるよう、起動後にドロワーを開く
+  Timer.set(() => openDrawerSafely(robot), BOOT_DRAWER_DELAY_MS)
+
   // 起動後に一度だけ天気予報
   Timer.set(() => {
-    withSpeechLock(() => fetchAndSpeakForecast(robot)).catch((error) => {
+    withSpeechLock(async () => {
+      await fetchAndSpeakForecast(robot)
+      Timer.set(() => openDrawerSafely(robot), 1000)
+    }).catch((error) => {
       speaking = false
       trace(`[demo_combo] boot forecast failed: ${error}\n`)
     })
   }, BOOT_FORECAST_DELAY_MS)
 
-  // たまに視線を動かす（サーボが無い場合は何もしない）
   Timer.repeat(() => lookAroundOnce(robot), 8000)
 
-  robot.ui.showBalloon('天気を調べる準備中')
-  Timer.set(() => robot.ui.hideBalloon(), 2500)
+  robot.ui.showBalloon('まもなく天気メニューを開くよ')
+  Timer.set(() => robot.ui.hideBalloon(), 2000)
 }
