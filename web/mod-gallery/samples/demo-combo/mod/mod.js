@@ -6,6 +6,7 @@ import Timer from 'timer'
 // 長久手市役所付近
 const LOCATION = Object.freeze({
   name: '長久手',
+  reading: 'ながくて',
   latitude: 35.18411,
   longitude: 137.04872,
 })
@@ -18,7 +19,7 @@ const FORECAST_PATH =
   '&daily=weather_code,temperature_2m_max,temperature_2m_min' +
   '&timezone=Asia%2FTokyo&forecast_days=1'
 
-const BUILD_ID = 'speak-motion-1'
+const BUILD_ID = 'kana-balloon-1'
 const BALLOON_MS = 4000
 const RESULT_HOLD_MS = 3500
 const HTTP_TIMEOUT_MS = 15000
@@ -27,6 +28,20 @@ const FIRST_FETCH_DELAY_MS = 8000
 const FETCH_INTERVAL_MS = 2 * 60 * 60 * 1000
 const MOTION_STEP_SEC = 0.35
 const MOTION_STEP_MS = 320
+const AFTER_SPEECH_HOLD_MS = 1200
+
+const DIGIT_YOMI = Object.freeze([
+  'ぜろ',
+  'いち',
+  'に',
+  'さん',
+  'よん',
+  'ご',
+  'ろく',
+  'なな',
+  'はち',
+  'きゅう',
+])
 
 function truncate(text, max = 40) {
   if (typeof text !== 'string') return ''
@@ -42,14 +57,58 @@ function formatTemperature(value) {
   return Math.round(value)
 }
 
+function numberToYomi(value) {
+  let n = Math.round(Number(value))
+  if (n !== n) return ''
+  if (n < 0) return `まいなす${numberToYomi(-n)}`
+  if (n < 10) return DIGIT_YOMI[n]
+  if (n === 10) return 'じゅう'
+  if (n < 20) return `じゅう${DIGIT_YOMI[n % 10]}`
+  if (n < 100) {
+    const tens = Math.floor(n / 10)
+    const ones = n % 10
+    const head = tens === 1 ? 'じゅう' : `${DIGIT_YOMI[tens]}じゅう`
+    return ones === 0 ? head : `${head}${DIGIT_YOMI[ones]}`
+  }
+  if (n === 100) return 'ひゃく'
+  if (n < 1000) {
+    const hundreds = Math.floor(n / 100)
+    const rest = n % 100
+    let head = 'ひゃく'
+    if (hundreds === 3) head = 'さんびゃく'
+    else if (hundreds === 6) head = 'ろっぴゃく'
+    else if (hundreds === 8) head = 'はっぴゃく'
+    else if (hundreds !== 1) head = `${DIGIT_YOMI[hundreds]}ひゃく`
+    return rest === 0 ? head : `${head}${numberToYomi(rest)}`
+  }
+  return String(n)
+}
+
 function describeWeather(code) {
-  if (code === 0 || code === 1) return { label: '晴れ', emotion: Emotion.HAPPY, motion: 'nod' }
-  if (code === 2 || code === 3) return { label: '曇り', emotion: Emotion.NEUTRAL, motion: 'lookAround' }
-  if (code >= 51 && code <= 67) return { label: '雨', emotion: Emotion.SAD, motion: 'lookDown' }
-  if (code >= 71 && code <= 77) return { label: '雪', emotion: Emotion.SAD, motion: 'lookDown' }
-  if (code >= 80 && code <= 82) return { label: 'にわか雨', emotion: Emotion.SAD, motion: 'lookDown' }
-  if (code >= 95) return { label: '雷雨', emotion: Emotion.ANGRY, motion: 'shake' }
-  return { label: 'わからない天気', emotion: Emotion.NEUTRAL, motion: 'nod' }
+  if (code === 0 || code === 1) {
+    return { label: '晴れ', reading: 'はれ', emotion: Emotion.HAPPY, motion: 'nod' }
+  }
+  if (code === 2 || code === 3) {
+    return { label: '曇り', reading: 'くもり', emotion: Emotion.NEUTRAL, motion: 'lookAround' }
+  }
+  if (code >= 51 && code <= 67) {
+    return { label: '雨', reading: 'あめ', emotion: Emotion.SAD, motion: 'lookDown' }
+  }
+  if (code >= 71 && code <= 77) {
+    return { label: '雪', reading: 'ゆき', emotion: Emotion.SAD, motion: 'lookDown' }
+  }
+  if (code >= 80 && code <= 82) {
+    return { label: 'にわか雨', reading: 'にわかあめ', emotion: Emotion.SAD, motion: 'lookDown' }
+  }
+  if (code >= 95) {
+    return { label: '雷雨', reading: 'らいう', emotion: Emotion.ANGRY, motion: 'shake' }
+  }
+  return {
+    label: 'わからない天気',
+    reading: 'わからないてんき',
+    emotion: Emotion.NEUTRAL,
+    motion: 'nod',
+  }
 }
 
 function buildForecastSpeech(body) {
@@ -57,10 +116,24 @@ function buildForecastSpeech(body) {
   if (!current) throw new Error('no current')
   const temperature = formatTemperature(current.temperature_2m)
   const weather = describeWeather(Number(current.weather_code))
-  let text = `${LOCATION.name}は${weather.label}`
-  if (temperature != null) text += `、${temperature}度`
-  text += 'だよ'
-  return { text, emotion: weather.emotion, motion: weather.motion }
+
+  let display = `${LOCATION.name}は${weather.label}`
+  let spoken = `${LOCATION.reading}は、${weather.reading}`
+  if (temperature != null) {
+    display += `、${temperature}度`
+    spoken += `。${numberToYomi(temperature)}ど`
+  }
+  display += 'だよ'
+  spoken += 'だよ'
+
+  return {
+    display,
+    spoken,
+    emotion: weather.emotion,
+    motion: weather.motion,
+    label: weather.label,
+    temperature,
+  }
 }
 
 function showStatus(robot, lines, ms = BALLOON_MS) {
@@ -243,10 +316,16 @@ async function playMotion(robot, kind) {
   await nod(robot)
 }
 
-async function say(robot, text) {
+/**
+ * 吹き出し: 読みやすい表示文（漢字可）
+ * 声: stackchan-voice 向けひらがな
+ */
+async function sayDual(robot, display, spoken) {
+  const balloon = truncate(display, 48)
   try {
-    robot.ui.showBalloon(truncate(text))
-    await robot.audio.say(text)
+    robot.ui.showBalloon(balloon)
+    await robot.audio.say(spoken)
+    await wait(AFTER_SPEECH_HOLD_MS)
   } finally {
     try {
       robot.ui.hideBalloon()
@@ -254,10 +333,10 @@ async function say(robot, text) {
   }
 }
 
-async function actAndSay(robot, text, motion = 'nod') {
+async function actAndSay(robot, display, spoken, motion = 'nod') {
   await faceFront(robot)
   await playMotion(robot, motion)
-  await say(robot, text)
+  await sayDual(robot, display, spoken)
 }
 
 function lookAroundIdle(robot) {
@@ -289,7 +368,12 @@ async function runDiagnosis(robot) {
 
 async function runForecast(robot) {
   await faceFront(robot)
-  await actAndSay(robot, `${LOCATION.name}の天気をみてくるね`, 'nod')
+  await actAndSay(
+    robot,
+    `${LOCATION.name}の天気をみてくるね`,
+    `${LOCATION.reading}のてんきを、みてくるね`,
+    'nod',
+  )
 
   const wifi = await checkWifi(robot)
   if (!wifi.ok) {
@@ -297,25 +381,28 @@ async function runForecast(robot) {
       robot.face.setEmotion(Emotion.SAD)
     } catch (_) {}
     showStatus(robot, ['取得結果:失敗', '理由:Wi-Fi', wifi.line], RESULT_HOLD_MS)
-    await actAndSay(robot, 'きょうはネットにつながっていないみたい', 'shake')
+    await actAndSay(
+      robot,
+      'ネットにつながっていないみたい',
+      'ねっとに、つながっていないみたい',
+      'shake',
+    )
     return
   }
 
   showStatus(robot, ['取得中...', wifi.line], 2500)
-  await actAndSay(robot, 'ちょっと待ってね', 'lookAround')
+  await actAndSay(robot, 'ちょっと待ってね', 'ちょっと、まってね', 'lookAround')
 
   try {
     const body = await httpsGetJson(FORECAST_HOST, FORECAST_PATH, FORECAST_HTTPS_PORT)
     const forecast = buildForecastSpeech(body)
-    const temperature = formatTemperature(body.current.temperature_2m)
-    const weather = describeWeather(Number(body.current.weather_code))
 
     showStatus(
       robot,
       [
         '取得結果:成功',
-        `${LOCATION.name}:${weather.label}`,
-        temperature != null ? `気温:${temperature}度` : '気温:不明',
+        `${LOCATION.name}:${forecast.label}`,
+        forecast.temperature != null ? `気温:${forecast.temperature}度` : '気温:不明',
       ],
       2200,
     )
@@ -323,14 +410,14 @@ async function runForecast(robot) {
       robot.face.setEmotion(forecast.emotion)
     } catch (_) {}
     await wait(600)
-    await actAndSay(robot, forecast.text, forecast.motion)
+    await actAndSay(robot, forecast.display, forecast.spoken, forecast.motion)
   } catch (error) {
     try {
       robot.face.setEmotion(Emotion.SAD)
     } catch (_) {}
     const detail = truncate(String(error && error.message ? error.message : error), 32)
     showStatus(robot, ['取得結果:失敗', '詳細↓', detail], RESULT_HOLD_MS)
-    await actAndSay(robot, '天気がとれなかったよ', 'shake')
+    await actAndSay(robot, '天気がとれなかったよ', 'てんきが、とれなかったよ', 'shake')
     trace(`[demo_combo] forecast failed: ${error}\n`)
   }
 }
@@ -375,14 +462,17 @@ export function onContextCreated(robot) {
     trace(`[demo_combo] drawer failed: ${error}\n`)
   }
 
-  // ステータス表示のみ（デバッグ）
-  showStatus(robot, [`版:${BUILD_ID}`, '発話+動作ON'], 2500)
+  showStatus(robot, [`版:${BUILD_ID}`, 'ふきだし+ひらがな'], 2500)
 
   void runExclusive(async () => {
-    await actAndSay(robot, '長久手の天気をお知らせするよ', 'nod')
+    await actAndSay(
+      robot,
+      '長久手の天気をお知らせするよ',
+      'ながくてのてんきを、おしらせするよ',
+      'nod',
+    )
   })
 
-  // 挨拶のあと少しおいて初回取得し、以降は2時間おき
   Timer.set(
     () => {
       void runExclusive(() => runForecast(robot))

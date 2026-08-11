@@ -3,10 +3,10 @@
   "format": "tech.stackchan.mod",
   "schemaVersion": 1,
   "id": "tech.stackchan.samples.demo-combo",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "type": "text",
   "name": "天気予報デモ",
-  "description": "長久手の天気をHTTPSで2時間おきに発話。見回しとうなずき付き。版:speak-motion-1",
+  "description": "ふきだしは漢字、声はひらがな。長久手の天気を2時間おき。版:kana-balloon-1",
   "author": "Stack-chan Community",
   "license": "Apache-2.0",
   "source": {
