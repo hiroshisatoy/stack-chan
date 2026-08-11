@@ -3,10 +3,10 @@
   "format": "tech.stackchan.mod",
   "schemaVersion": 1,
   "id": "tech.stackchan.samples.demo-combo",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "type": "text",
   "name": "天気予報デモ",
-  "description": "天気はHTTP。ドロワー「HTTPS試験」でdevice.network.httpsを手動確認。版:https-test-1",
+  "description": "長久手市の天気をHTTPSで取得。起動後と2時間おきに自動発話。版:nagakute-2h-1",
   "author": "Stack-chan Community",
   "license": "Apache-2.0",
   "source": {

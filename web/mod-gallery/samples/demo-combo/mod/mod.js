@@ -2,15 +2,14 @@ import { Emotion } from 'face-state'
 import TextDecoder from 'text/decoder'
 import Timer from 'timer'
 
-// 東京駅付近
+// 長久手市役所付近
 const LOCATION = Object.freeze({
-  name: '東京',
-  latitude: 35.6812,
-  longitude: 139.7671,
+  name: '長久手',
+  latitude: 35.18411,
+  longitude: 137.04872,
 })
 
 const FORECAST_HOST = 'api.open-meteo.com'
-const FORECAST_HTTP_PORT = 80
 const FORECAST_HTTPS_PORT = 443
 const FORECAST_PATH =
   `/v1/forecast?latitude=${LOCATION.latitude}&longitude=${LOCATION.longitude}` +
@@ -18,10 +17,12 @@ const FORECAST_PATH =
   '&daily=weather_code,temperature_2m_max,temperature_2m_min' +
   '&timezone=Asia%2FTokyo&forecast_days=1'
 
-const BUILD_ID = 'https-test-1'
+const BUILD_ID = 'nagakute-2h-1'
 const BALLOON_MS = 5000
 const RESULT_HOLD_MS = 4500
 const HTTP_TIMEOUT_MS = 15000
+const FIRST_FETCH_DELAY_MS = 5000
+const FETCH_INTERVAL_MS = 2 * 60 * 60 * 1000
 
 function truncate(text, max = 40) {
   if (typeof text !== 'string') return ''
@@ -88,15 +89,14 @@ async function checkWifi(robot) {
 }
 
 /**
- * fetch ではなく host の HTTP/HTTPS クライアントを使う。
- * protocol: 'http' | 'https'
+ * fetch ではなく host の HTTPS クライアントを使う。
  */
-function networkGetJson(protocol, host, path, port, timeoutMs = HTTP_TIMEOUT_MS) {
+function httpsGetJson(host, path, port = FORECAST_HTTPS_PORT, timeoutMs = HTTP_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
     const networkRoot = globalThis.device && device.network
-    const network = networkRoot && networkRoot[protocol]
+    const network = networkRoot && networkRoot.https
     if (!network || !network.io) {
-      reject(new Error(`no-${protocol}-client`))
+      reject(new Error('no-https-client'))
       return
     }
 
@@ -171,14 +171,6 @@ function networkGetJson(protocol, host, path, port, timeoutMs = HTTP_TIMEOUT_MS)
   })
 }
 
-function httpGetJson(host, path, port = FORECAST_HTTP_PORT, timeoutMs = HTTP_TIMEOUT_MS) {
-  return networkGetJson('http', host, path, port, timeoutMs)
-}
-
-function httpsGetJson(host, path, port = FORECAST_HTTPS_PORT, timeoutMs = HTTP_TIMEOUT_MS) {
-  return networkGetJson('https', host, path, port, timeoutMs)
-}
-
 async function say(robot, text) {
   try {
     robot.ui.showBalloon(truncate(text))
@@ -192,60 +184,18 @@ async function say(robot, text) {
 
 async function runDiagnosis(robot) {
   const wifi = await checkWifi(robot)
-  const httpOk = Boolean(globalThis.device && device.network && device.network.http && device.network.http.io)
   const httpsOk = Boolean(globalThis.device && device.network && device.network.https && device.network.https.io)
   showLines(robot, [
     `版:${BUILD_ID}`,
     wifi.line,
-    httpOk ? 'HTTP:あり' : 'HTTP:無し',
     httpsOk ? 'HTTPS:あり' : 'HTTPS:無し',
+    '場所:長久手',
+    '間隔:2時間',
   ])
   try {
-    robot.face.setEmotion(wifi.ok && httpOk ? Emotion.HAPPY : Emotion.SAD)
+    robot.face.setEmotion(wifi.ok && httpsOk ? Emotion.HAPPY : Emotion.SAD)
   } catch (_) {}
   await wait(3500)
-}
-
-async function runHttpsTest(robot) {
-  const wifi = await checkWifi(robot)
-  if (!wifi.ok) {
-    try {
-      robot.face.setEmotion(Emotion.SAD)
-    } catch (_) {}
-    showLines(robot, ['HTTPS結果:失敗', '理由:Wi-Fi', wifi.line], RESULT_HOLD_MS)
-    await wait(RESULT_HOLD_MS)
-    return
-  }
-
-  showLines(robot, ['HTTPS試験中...', wifi.line], 2500)
-  await wait(500)
-
-  try {
-    const body = await httpsGetJson(FORECAST_HOST, FORECAST_PATH, FORECAST_HTTPS_PORT)
-    const temperature = formatTemperature(body.current.temperature_2m)
-    const weather = describeWeather(Number(body.current.weather_code))
-    showLines(
-      robot,
-      [
-        'HTTPS結果:成功',
-        `${LOCATION.name}:${weather.label}`,
-        temperature != null ? `気温:${temperature}度` : '気温:不明',
-      ],
-      RESULT_HOLD_MS,
-    )
-    try {
-      robot.face.setEmotion(Emotion.HAPPY)
-    } catch (_) {}
-    await wait(RESULT_HOLD_MS)
-  } catch (error) {
-    try {
-      robot.face.setEmotion(Emotion.SAD)
-    } catch (_) {}
-    const detail = truncate(String(error && error.message ? error.message : error), 32)
-    showLines(robot, ['HTTPS結果:失敗', '詳細↓', detail], RESULT_HOLD_MS)
-    await wait(RESULT_HOLD_MS)
-    trace(`[demo_combo] https test failed: ${error}\n`)
-  }
 }
 
 async function runForecast(robot) {
@@ -259,11 +209,11 @@ async function runForecast(robot) {
     return
   }
 
-  showLines(robot, ['取得中(HTTP)...', wifi.line], 2500)
+  showLines(robot, ['取得中(HTTPS)...', wifi.line, LOCATION.name], 2500)
   await wait(500)
 
   try {
-    const body = await httpGetJson(FORECAST_HOST, FORECAST_PATH, FORECAST_HTTP_PORT)
+    const body = await httpsGetJson(FORECAST_HOST, FORECAST_PATH, FORECAST_HTTPS_PORT)
     const forecast = buildForecastSpeech(body)
     const temperature = formatTemperature(body.current.temperature_2m)
     const weather = describeWeather(Number(body.current.weather_code))
@@ -326,16 +276,6 @@ export function onContextCreated(robot) {
       },
     })
     robot.drawer.addDrawerButton({
-      key: 'demo-combo:https',
-      label: 'HTTPS試験',
-      callback(nextRobot) {
-        try {
-          nextRobot.ui.closeDrawer()
-        } catch (_) {}
-        void runExclusive(() => runHttpsTest(nextRobot))
-      },
-    })
-    robot.drawer.addDrawerButton({
       key: 'demo-combo:diagnose',
       label: '診断',
       callback(nextRobot) {
@@ -349,5 +289,14 @@ export function onContextCreated(robot) {
     trace(`[demo_combo] drawer failed: ${error}\n`)
   }
 
-  showLines(robot, [`版:${BUILD_ID}`, '起動OK', '手動で天気へ'], 3000)
+  showLines(robot, [`版:${BUILD_ID}`, '長久手の天気', '2時間ごと自動'], 3000)
+
+  // 起動直後は少し待ってから取得し、以降は2時間おき
+  Timer.set(
+    () => {
+      void runExclusive(() => runForecast(robot))
+    },
+    FIRST_FETCH_DELAY_MS,
+    FETCH_INTERVAL_MS,
+  )
 }
