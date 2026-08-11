@@ -1,1 +1,1 @@
-Mirror of firmware demo_combo. Uses device.network.http. Build id: http-client-1
+Mirror of firmware demo_combo. HTTP for weather, manual HTTPS test via device.network.https. Build: https-test-1
