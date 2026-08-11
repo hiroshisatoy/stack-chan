@@ -1,4 +1,5 @@
 import { Emotion } from 'face-state'
+import Net from 'net'
 import { randomBetween } from 'stackchan-util'
 import Timer from 'timer'
 
@@ -20,6 +21,7 @@ const FORECAST_URL =
 
 const BOOT_DRAWER_DELAY_MS = 2500
 const BOOT_FORECAST_DELAY_MS = 5000
+const DIAGNOSIS_BALLOON_MS = 6000
 
 function truncate(text, max = 48) {
   if (typeof text !== 'string') return ''
@@ -77,6 +79,93 @@ function openDrawerSafely(robot) {
   }
 }
 
+function showDiagnosisBalloon(robot, lines, holdMs = DIAGNOSIS_BALLOON_MS) {
+  const text = lines.join('\n')
+  trace(`[demo_combo] diagnosis\n${text}\n`)
+  robot.ui.showBalloon(text)
+  Timer.set(() => robot.ui.hideBalloon(), holdMs)
+}
+
+function looksLikeTlsError(error) {
+  const message = String(error)
+  return /cert|certificate|tls|ssl|untrusted|handshake|ca\d+/i.test(message)
+}
+
+/**
+ * Wi-Fi / IP / HTTPS(Open-Meteo) / JSON を段階チェックする。
+ * CA 自体の有無は公開 API が無いので、HTTPS 失敗内容から推定する。
+ */
+async function diagnoseConnectivity(robot) {
+  const lines = []
+  const network = robot.connectivity && robot.connectivity.network
+
+  if (!network) {
+    lines.push('1.Wi-Fi API: 無し')
+    return { ok: false, stage: 'network-api', lines }
+  }
+
+  robot.ui.showBalloon('診断1: Wi-Fi...')
+  let ready
+  try {
+    ready = await network.ready
+  } catch (error) {
+    lines.push('1.Wi-Fi: 例外')
+    lines.push(truncate(String(error), 36))
+    return { ok: false, stage: 'wifi-exception', lines, error }
+  }
+
+  if (ready.status !== 'connected') {
+    lines.push(`1.Wi-Fi: ${ready.status}`)
+    if (ready.reason) lines.push(truncate(String(ready.reason), 36))
+    return { ok: false, stage: 'wifi', lines, ready }
+  }
+  lines.push('1.Wi-Fi: OK')
+
+  let ip = ''
+  try {
+    ip = Net.get('IP') || ''
+  } catch (error) {
+    lines.push('2.IP: 取得失敗')
+    lines.push(truncate(String(error), 36))
+    return { ok: false, stage: 'ip', lines, error }
+  }
+  if (!ip) {
+    lines.push('2.IP: 無し')
+    return { ok: false, stage: 'ip', lines }
+  }
+  lines.push(`2.IP: ${ip}`)
+
+  robot.ui.showBalloon('診断3: HTTPS...')
+  try {
+    const response = await fetch(FORECAST_URL)
+    lines.push(`3.HTTPS: ${response.status}`)
+    if (!response.ok) {
+      lines.push('Open-Meteo応答が異常')
+      return { ok: false, stage: 'http', lines, status: response.status }
+    }
+
+    const body = await response.json()
+    if (!body || !body.current) {
+      lines.push('4.JSON: current無し')
+      return { ok: false, stage: 'json', lines }
+    }
+
+    const temperature = formatTemperature(body.current.temperature_2m)
+    lines.push(temperature != null ? `4.API: OK ${temperature}度` : '4.API: OK')
+    lines.push('(CA/TLSも通過)')
+    return { ok: true, stage: 'ok', lines, body }
+  } catch (error) {
+    lines.push('3.HTTPS: 失敗')
+    lines.push(truncate(String(error), 36))
+    if (looksLikeTlsError(error)) {
+      lines.push('CA不足の可能性(ca176等)')
+    } else {
+      lines.push('DNS/経路/応答を確認')
+    }
+    return { ok: false, stage: 'https', lines, error }
+  }
+}
+
 async function say(robot, text) {
   robot.ui.showBalloon(truncate(text))
   try {
@@ -86,20 +175,31 @@ async function say(robot, text) {
   }
 }
 
-async function fetchAndSpeakForecast(robot) {
-  robot.ui.showBalloon('天気を調べるよ...')
-  try {
-    const response = await fetch(FORECAST_URL)
-    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+async function runDiagnosis(robot) {
+  const result = await diagnoseConnectivity(robot)
+  showDiagnosisBalloon(robot, result.lines)
+  robot.face.setEmotion(result.ok ? Emotion.HAPPY : Emotion.SAD)
+  return result
+}
 
-    const body = await response.json()
-    const forecast = buildForecastSpeech(body)
+async function fetchAndSpeakForecast(robot) {
+  robot.ui.showBalloon('天気前に接続チェック...')
+  const diagnosis = await diagnoseConnectivity(robot)
+  if (!diagnosis.ok) {
+    robot.face.setEmotion(Emotion.SAD)
+    showDiagnosisBalloon(robot, diagnosis.lines)
+    return
+  }
+
+  try {
+    const forecast = buildForecastSpeech(diagnosis.body)
     robot.face.setEmotion(forecast.emotion)
     await say(robot, forecast.text)
   } catch (error) {
     robot.face.setEmotion(Emotion.SAD)
-    await say(robot, '天気がわからなかったよ')
-    trace(`[demo_combo] forecast failed: ${error}\n`)
+    robot.ui.showBalloon('天気の文章化に失敗')
+    Timer.set(() => robot.ui.hideBalloon(), DIAGNOSIS_BALLOON_MS)
+    trace(`[demo_combo] forecast build failed: ${error}\n`)
   }
 }
 
@@ -125,7 +225,6 @@ export function onContextCreated(robot) {
     }
   }
 
-  // host と同じ drawer API を使う（callback 付き）
   robot.drawer.addDrawerButton({
     key: 'demo-combo:forecast',
     label: '天気',
@@ -138,10 +237,20 @@ export function onContextCreated(robot) {
     },
   })
 
-  // 右上メニューが無反応でも使えるよう、起動後にドロワーを開く
+  robot.drawer.addDrawerButton({
+    key: 'demo-combo:diagnose',
+    label: '診断',
+    callback(nextRobot) {
+      nextRobot.ui.closeDrawer()
+      withSpeechLock(() => runDiagnosis(nextRobot)).catch((error) => {
+        speaking = false
+        trace(`[demo_combo] diagnosis task failed: ${error}\n`)
+      })
+    },
+  })
+
   Timer.set(() => openDrawerSafely(robot), BOOT_DRAWER_DELAY_MS)
 
-  // 起動後に一度だけ天気予報
   Timer.set(() => {
     withSpeechLock(async () => {
       await fetchAndSpeakForecast(robot)
@@ -154,6 +263,6 @@ export function onContextCreated(robot) {
 
   Timer.repeat(() => lookAroundOnce(robot), 8000)
 
-  robot.ui.showBalloon('まもなく天気メニューを開くよ')
+  robot.ui.showBalloon('起動後に接続診断→天気')
   Timer.set(() => robot.ui.hideBalloon(), 2000)
 }
