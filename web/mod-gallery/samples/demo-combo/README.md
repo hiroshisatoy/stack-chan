@@ -1,1 +1,1 @@
-Mirror of firmware demo_combo. Kanji balloon + hiragana TTS. Build: kana-balloon-1
+Mirror of firmware demo_combo. Restores neutral after tasks. Build: neutral-restore-1
