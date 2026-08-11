@@ -22,11 +22,16 @@ const FORECAST_URL =
 
 const BOOT_DRAWER_DELAY_MS = 2500
 const BOOT_FORECAST_DELAY_MS = 5000
-const DIAGNOSIS_BALLOON_MS = 6000
+const DIAGNOSIS_BALLOON_MS = 8000
+const DIAGNOSIS_HOLD_MS = 4500
 
 function truncate(text, max = 48) {
   if (typeof text !== 'string') return ''
   return text.length > max ? `${text.slice(0, max)}…` : text
+}
+
+function wait(ms) {
+  return new Promise((resolve) => Timer.set(resolve, ms))
 }
 
 function formatTemperature(value) {
@@ -90,53 +95,46 @@ function showDiagnosisBalloon(robot, lines, holdMs = DIAGNOSIS_BALLOON_MS) {
 /**
  * 安全な診断: Wi-Fi と IP だけ。
  * HTTPS は一部端末でハードフォールするため診断からは外す。
+ * 見出しの「HTTPS診断:スキップ」は必ず先頭に出す。
  */
 async function diagnoseConnectivity(robot) {
-  const lines = []
+  const lines = ['HTTPS診断:スキップ', '(落ち防止のため未実施)']
   const network = robot.connectivity && robot.connectivity.network
 
   if (!network) {
-    lines.push('1.Wi-Fi API: 無し')
-    lines.push('3.HTTPS: 診断スキップ')
+    lines.push('1.Wi-Fi API:無し')
     return { ok: false, stage: 'network-api', lines }
   }
 
-  robot.ui.showBalloon('診断1: Wi-Fi...')
   let ready
   try {
     ready = await network.ready
   } catch (error) {
-    lines.push('1.Wi-Fi: 例外')
+    lines.push('1.Wi-Fi:例外')
     lines.push(truncate(String(error), 36))
-    lines.push('3.HTTPS: 診断スキップ')
     return { ok: false, stage: 'wifi-exception', lines, error }
   }
 
   if (ready.status !== 'connected') {
-    lines.push(`1.Wi-Fi: ${ready.status}`)
+    lines.push(`1.Wi-Fi:${ready.status}`)
     if (ready.reason) lines.push(truncate(String(ready.reason), 36))
-    lines.push('3.HTTPS: 診断スキップ')
     return { ok: false, stage: 'wifi', lines, ready }
   }
-  lines.push('1.Wi-Fi: OK')
+  lines.push('1.Wi-Fi:OK')
 
   let ip = ''
   try {
     ip = Net.get('IP') || ''
   } catch (error) {
-    lines.push('2.IP: 取得失敗')
+    lines.push('2.IP:取得失敗')
     lines.push(truncate(String(error), 36))
-    lines.push('3.HTTPS: 診断スキップ')
     return { ok: false, stage: 'ip', lines, error }
   }
   if (!ip) {
-    lines.push('2.IP: 無し')
-    lines.push('3.HTTPS: 診断スキップ')
+    lines.push('2.IP:無し')
     return { ok: false, stage: 'ip', lines }
   }
-  lines.push(`2.IP: ${ip}`)
-  lines.push('3.HTTPS: 診断スキップ')
-  lines.push('(落ち対策で未実施)')
+  lines.push(`2.IP:${ip}`)
   return { ok: true, stage: 'ok', lines }
 }
 
@@ -160,19 +158,20 @@ async function say(robot, text) {
 
 async function runDiagnosis(robot) {
   const result = await diagnoseConnectivity(robot)
-  showDiagnosisBalloon(robot, result.lines)
+  showDiagnosisBalloon(robot, result.lines, DIAGNOSIS_BALLOON_MS)
   robot.face.setEmotion(result.ok ? Emotion.HAPPY : Emotion.SAD)
+  // 読み取れるよう、吹き出しをしばらく残す
+  await wait(DIAGNOSIS_HOLD_MS)
   return result
 }
 
 async function fetchAndSpeakForecast(robot) {
-  robot.ui.showBalloon('天気前に接続チェック...')
   const diagnosis = await diagnoseConnectivity(robot)
-  if (!diagnosis.ok) {
-    robot.face.setEmotion(Emotion.SAD)
-    showDiagnosisBalloon(robot, diagnosis.lines)
-    return
-  }
+  // 天気フローでも必ず診断結果（スキップ文言含む）を見せてから進む
+  showDiagnosisBalloon(robot, diagnosis.lines, DIAGNOSIS_BALLOON_MS)
+  robot.face.setEmotion(diagnosis.ok ? Emotion.HAPPY : Emotion.SAD)
+  await wait(DIAGNOSIS_HOLD_MS)
+  if (!diagnosis.ok) return
 
   try {
     const body = await fetchForecastBody(robot)
@@ -182,6 +181,7 @@ async function fetchAndSpeakForecast(robot) {
   } catch (error) {
     robot.face.setEmotion(Emotion.SAD)
     showDiagnosisBalloon(robot, ['天気取得失敗', truncate(String(error), 40), 'HTTP経路を確認'])
+    await wait(DIAGNOSIS_HOLD_MS)
     trace(`[demo_combo] forecast failed: ${error}\n`)
   }
 }
