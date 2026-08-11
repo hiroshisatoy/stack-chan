@@ -6,7 +6,7 @@
   "version": "1.0.0",
   "type": "text",
   "name": "天気予報デモ",
-  "description": "Open-Meteoから東京の天気予報を取得してしゃべります。起動後にドロワーを自動で開き、その後天気も読み上げます。ドロワーの「天気」から再実行できます。Wi-Fi接続が必要です。",
+  "description": "Open-Meteoから東京の天気予報を取得してしゃべります。起動時とドロワー「診断」でWi-Fi/IP/HTTPS(CA推定)/APIの接続チェックを吹き出し表示します。",
   "author": "Stack-chan Community",
   "license": "Apache-2.0",
   "source": {
