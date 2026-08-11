@@ -1,1 +1,1 @@
-Mirror of firmware demo_combo. Nagakute weather over HTTPS every 2 hours. Build: nagakute-2h-1
+Mirror of firmware demo_combo. Speaks weather with head motion. Build: speak-motion-1
