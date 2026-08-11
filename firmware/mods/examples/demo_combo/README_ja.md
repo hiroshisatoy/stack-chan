@@ -2,31 +2,33 @@
 
 Open-Meteo から東京の天気予報を取得してしゃべるひな形 MOD です。
 
-## 再起動ループ対策
+## いま分かっていること
 
-起動時は通信もしません。ドロワーから手動実行します。
-起動直後に `版:fetch-status-1` と出れば最新です。
+以前の `理由:HTTP/JSON` は「Wi-Fi はOKだが、天気データの取得/解析で失敗した」という総称です。
+実際の例外（DNS / timeout / status / json など）は隠れていました。
+
+本版では:
+
+- `fetch` ではなく `device.network.http` で取得
+- 失敗時は `詳細↓` の次の行に生エラーを表示
+
+詳細の例:
+
+- `done:…` … 接続/DNS/切断エラー
+- `status:404` … HTTP ステータス異常
+- `json:…` … 応答の JSON 解析失敗
+- `timeout` … 15秒以内に終わらない
+- `no-http-client` … 端末に HTTP クライアントが無い
 
 ## 操作
 
+起動直後に `版:http-client-1` と出れば最新です。
+
 | 操作 | 動作 |
 | --- | --- |
-| 起動 | `版:fetch-status-1` / `起動OK` を表示するだけ |
-| ドロワー「診断」 | Wi-Fi 状態のみ確認 |
-| ドロワー「天気」 | 取得成否を吹き出しで明示 → 成功ならしゃべる |
-
-天気の吹き出し例:
-
-- 成功: `取得結果:成功` / `東京:晴れ` / `気温:24度`
-- 失敗: `取得結果:失敗` / `理由:Wi-Fi未接続` または `理由:HTTP/JSON`
+| ドロワー「診断」 | Wi-Fi と HTTP クライアント有無 |
+| ドロワー「天気」 | 取得成功/失敗を明示。成功なら発話 |
 
 ## インストール
 
 Gallery から入れ直してください。
-
-```sh
-cd firmware
-npm run mod:m5stackchan_cores3 -- mods/examples/demo_combo/manifest.json
-```
-
-天気データは [Open-Meteo](https://open-meteo.com/)（HTTP）を利用します。

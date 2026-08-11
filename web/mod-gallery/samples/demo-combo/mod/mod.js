@@ -1,4 +1,5 @@
 import { Emotion } from 'face-state'
+import TextDecoder from 'text/decoder'
 import Timer from 'timer'
 
 // 東京駅付近
@@ -8,19 +9,18 @@ const LOCATION = Object.freeze({
   longitude: 139.7671,
 })
 
-// TLSを避けて平文HTTPのみ
-const FORECAST_URL =
-  'http://api.open-meteo.com/v1/forecast' +
-  `?latitude=${LOCATION.latitude}` +
-  `&longitude=${LOCATION.longitude}` +
+const FORECAST_HOST = 'api.open-meteo.com'
+const FORECAST_PORT = 80
+const FORECAST_PATH =
+  `/v1/forecast?latitude=${LOCATION.latitude}&longitude=${LOCATION.longitude}` +
   '&current=temperature_2m,weather_code' +
   '&daily=weather_code,temperature_2m_max,temperature_2m_min' +
-  '&timezone=Asia%2FTokyo' +
-  '&forecast_days=1'
+  '&timezone=Asia%2FTokyo&forecast_days=1'
 
-const BUILD_ID = 'fetch-status-1'
+const BUILD_ID = 'http-client-1'
 const BALLOON_MS = 5000
-const RESULT_HOLD_MS = 4000
+const RESULT_HOLD_MS = 4500
+const HTTP_TIMEOUT_MS = 15000
 
 function truncate(text, max = 40) {
   if (typeof text !== 'string') return ''
@@ -86,12 +86,87 @@ async function checkWifi(robot) {
   }
 }
 
-async function fetchForecast() {
-  const response = await fetch(FORECAST_URL)
-  if (!response.ok) throw new Error(`HTTP ${response.status}`)
-  const body = await response.json()
-  if (!body || !body.current) throw new Error('bad json')
-  return body
+/**
+ * fetch ではなく host の HTTP クライアントを使う。
+ * 失敗時は詳細コード付き Error を投げる（status / done / json / timeout など）。
+ */
+function httpGetJson(host, path, port = 80, timeoutMs = HTTP_TIMEOUT_MS) {
+  return new Promise((resolve, reject) => {
+    const http = globalThis.device && device.network && device.network.http
+    if (!http || !http.io) {
+      reject(new Error('no-http-client'))
+      return
+    }
+
+    let settled = false
+    let statusCode = 0
+    let body = ''
+    const decoder = new TextDecoder()
+    let client
+
+    const finish = (fn, value) => {
+      if (settled) return
+      settled = true
+      try {
+        Timer.clear(timeout)
+      } catch (_) {}
+      try {
+        client.close()
+      } catch (_) {}
+      fn(value)
+    }
+
+    const timeout = Timer.set(() => finish(reject, new Error('timeout')), timeoutMs)
+
+    try {
+      client = new http.io({
+        ...http,
+        host,
+        port,
+      })
+    } catch (error) {
+      finish(reject, new Error(`client:${truncate(String(error), 24)}`))
+      return
+    }
+
+    client.request({
+      path,
+      headers: new Map([
+        ['accept', 'application/json'],
+        ['connection', 'close'],
+      ]),
+      onHeaders(status) {
+        statusCode = status
+      },
+      onReadable(count) {
+        try {
+          body += decoder.decode(this.read(count))
+        } catch (error) {
+          finish(reject, new Error(`read:${truncate(String(error), 20)}`))
+        }
+      },
+      onDone(error) {
+        if (error) {
+          finish(reject, new Error(`done:${truncate(String(error), 24)}`))
+          return
+        }
+        if (statusCode < 200 || statusCode >= 300) {
+          finish(reject, new Error(`status:${statusCode}`))
+          return
+        }
+        try {
+          const json = JSON.parse(body)
+          if (!json || !json.current) {
+            finish(reject, new Error('json:no-current'))
+            return
+          }
+          finish(resolve, json)
+        } catch (_parseError) {
+          finish(reject, new Error(`json:${truncate(body, 18)}`))
+        }
+      },
+    })
+  })
 }
 
 async function say(robot, text) {
@@ -106,11 +181,11 @@ async function say(robot, text) {
 }
 
 async function runDiagnosis(robot) {
-  // Net/HTTPS/自動通信は使わない（起動ループ対策）
   const wifi = await checkWifi(robot)
-  showLines(robot, [`版:${BUILD_ID}`, '暗号化検査:しない', wifi.line])
+  const httpOk = Boolean(globalThis.device && device.network && device.network.http && device.network.http.io)
+  showLines(robot, [`版:${BUILD_ID}`, wifi.line, httpOk ? 'HTTPクライアント:あり' : 'HTTPクライアント:無し'])
   try {
-    robot.face.setEmotion(wifi.ok ? Emotion.HAPPY : Emotion.SAD)
+    robot.face.setEmotion(wifi.ok && httpOk ? Emotion.HAPPY : Emotion.SAD)
   } catch (_) {}
   await wait(3500)
 }
@@ -121,21 +196,20 @@ async function runForecast(robot) {
     try {
       robot.face.setEmotion(Emotion.SAD)
     } catch (_) {}
-    showLines(robot, ['取得結果:失敗', '理由:Wi-Fi未接続', wifi.line], RESULT_HOLD_MS)
+    showLines(robot, ['取得結果:失敗', '理由:Wi-Fi', wifi.line], RESULT_HOLD_MS)
     await wait(RESULT_HOLD_MS)
     return
   }
 
-  showLines(robot, ['取得中...', wifi.line], 2500)
-  await wait(800)
+  showLines(robot, ['取得中(HTTP)...', wifi.line], 2500)
+  await wait(500)
 
   try {
-    const body = await fetchForecast()
+    const body = await httpGetJson(FORECAST_HOST, FORECAST_PATH, FORECAST_PORT)
     const forecast = buildForecastSpeech(body)
     const temperature = formatTemperature(body.current.temperature_2m)
     const weather = describeWeather(Number(body.current.weather_code))
 
-    // 成否を先に明示してからしゃべる
     showLines(
       robot,
       [
@@ -154,21 +228,20 @@ async function runForecast(robot) {
       robot.face.setEmotion(forecast.emotion)
     } catch (_) {}
     await say(robot, forecast.text)
-
     showLines(robot, ['取得結果:成功', '発話まで完了'], 2500)
     await wait(2000)
   } catch (error) {
     try {
       robot.face.setEmotion(Emotion.SAD)
     } catch (_) {}
-    showLines(robot, ['取得結果:失敗', '理由:HTTP/JSON', truncate(String(error), 28)], RESULT_HOLD_MS)
+    const detail = truncate(String(error && error.message ? error.message : error), 32)
+    showLines(robot, ['取得結果:失敗', '詳細↓', detail], RESULT_HOLD_MS)
     await wait(RESULT_HOLD_MS)
     trace(`[demo_combo] forecast failed: ${error}\n`)
   }
 }
 
 export function onContextCreated(robot) {
-  // 起動時はネットワークもドロワー自動オープンもしない（再起動ループ対策）
   let busy = false
 
   async function runExclusive(task) {
