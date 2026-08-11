@@ -94,11 +94,11 @@ function showDiagnosisBalloon(robot, lines, holdMs = DIAGNOSIS_BALLOON_MS) {
 
 /**
  * 安全な診断: Wi-Fi と IP だけ。
- * HTTPS は一部端末でハードフォールするため診断からは外す。
- * 見出しの「HTTPS診断:スキップ」は必ず先頭に出す。
+ * TLS/HTTPS の実通信チェックは端末落ちの原因になるため行わない。
+ * 表示文言にも HTTPS を出さず、誤解を避ける。
  */
 async function diagnoseConnectivity(robot) {
-  const lines = ['HTTPS診断:スキップ', '(落ち防止のため未実施)']
+  const lines = ['暗号化検査:しない', '(端末安定のため)', '版:diag-wifi-only']
   const network = robot.connectivity && robot.connectivity.network
 
   if (!network) {
@@ -246,6 +246,6 @@ export function onContextCreated(robot) {
 
   Timer.repeat(() => lookAroundOnce(robot), 8000)
 
-  robot.ui.showBalloon('診断はWi-Fi/IPのみ')
-  Timer.set(() => robot.ui.hideBalloon(), 2000)
+  robot.ui.showBalloon('版:diag-wifi-only')
+  Timer.set(() => robot.ui.hideBalloon(), 2500)
 }

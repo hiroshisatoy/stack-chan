@@ -3,10 +3,10 @@
   "format": "tech.stackchan.mod",
   "schemaVersion": 1,
   "id": "tech.stackchan.samples.demo-combo",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "text",
   "name": "天気予報デモ",
-  "description": "Open-Meteoから東京の天気を取得してしゃべります。診断はWi-Fi/IPのみ（HTTPSは端末落ち対策でスキップ）。天気取得はHTTPです。",
+  "description": "東京の天気をHTTPで取得してしゃべります。診断はWi-Fi/IPのみ。起動時に「版:diag-wifi-only」と出れば最新です。",
   "author": "Stack-chan Community",
   "license": "Apache-2.0",
   "source": {
