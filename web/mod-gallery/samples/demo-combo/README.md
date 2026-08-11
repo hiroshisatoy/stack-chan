@@ -1,1 +1,1 @@
-Mirror of firmware demo_combo. HTTP for weather, manual HTTPS test via device.network.https. Build: https-test-1
+Mirror of firmware demo_combo. Nagakute weather over HTTPS every 2 hours. Build: nagakute-2h-1
