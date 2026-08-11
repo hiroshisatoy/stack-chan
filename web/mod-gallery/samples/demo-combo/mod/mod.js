@@ -19,7 +19,7 @@ const FORECAST_PATH =
   '&daily=weather_code,temperature_2m_max,temperature_2m_min' +
   '&timezone=Asia%2FTokyo&forecast_days=1'
 
-const BUILD_ID = 'kana-balloon-1'
+const BUILD_ID = 'neutral-restore-1'
 const BALLOON_MS = 4000
 const RESULT_HOLD_MS = 3500
 const HTTP_TIMEOUT_MS = 15000
@@ -29,6 +29,7 @@ const FETCH_INTERVAL_MS = 2 * 60 * 60 * 1000
 const MOTION_STEP_SEC = 0.35
 const MOTION_STEP_MS = 320
 const AFTER_SPEECH_HOLD_MS = 1200
+const RESTORE_NEUTRAL_MS = 3000
 
 const DIGIT_YOMI = Object.freeze([
   'ぜろ',
@@ -339,6 +340,17 @@ async function actAndSay(robot, display, spoken, motion = 'nod') {
   await sayDual(robot, display, spoken)
 }
 
+async function restoreNeutral(robot, delayMs = RESTORE_NEUTRAL_MS) {
+  await wait(delayMs)
+  try {
+    robot.ui.hideBalloon()
+  } catch (_) {}
+  try {
+    robot.face.setEmotion(Emotion.NEUTRAL)
+  } catch (_) {}
+  await faceFront(robot)
+}
+
 function lookAroundIdle(robot) {
   try {
     const x = randomBetween(0.4, 1.0)
@@ -364,61 +376,66 @@ async function runDiagnosis(robot) {
     robot.face.setEmotion(wifi.ok && httpsOk ? Emotion.HAPPY : Emotion.SAD)
   } catch (_) {}
   await wait(3500)
+  await restoreNeutral(robot)
 }
 
 async function runForecast(robot) {
-  await faceFront(robot)
-  await actAndSay(
-    robot,
-    `${LOCATION.name}の天気をみてくるね`,
-    `${LOCATION.reading}のてんきを、みてくるね`,
-    'nod',
-  )
-
-  const wifi = await checkWifi(robot)
-  if (!wifi.ok) {
-    try {
-      robot.face.setEmotion(Emotion.SAD)
-    } catch (_) {}
-    showStatus(robot, ['取得結果:失敗', '理由:Wi-Fi', wifi.line], RESULT_HOLD_MS)
+  try {
+    await faceFront(robot)
     await actAndSay(
       robot,
-      'ネットにつながっていないみたい',
-      'ねっとに、つながっていないみたい',
-      'shake',
+      `${LOCATION.name}の天気をみてくるね`,
+      `${LOCATION.reading}のてんきを、みてくるね`,
+      'nod',
     )
-    return
-  }
 
-  showStatus(robot, ['取得中...', wifi.line], 2500)
-  await actAndSay(robot, 'ちょっと待ってね', 'ちょっと、まってね', 'lookAround')
+    const wifi = await checkWifi(robot)
+    if (!wifi.ok) {
+      try {
+        robot.face.setEmotion(Emotion.SAD)
+      } catch (_) {}
+      showStatus(robot, ['取得結果:失敗', '理由:Wi-Fi', wifi.line], RESULT_HOLD_MS)
+      await actAndSay(
+        robot,
+        'ネットにつながっていないみたい',
+        'ねっとに、つながっていないみたい',
+        'shake',
+      )
+      return
+    }
 
-  try {
-    const body = await httpsGetJson(FORECAST_HOST, FORECAST_PATH, FORECAST_HTTPS_PORT)
-    const forecast = buildForecastSpeech(body)
+    showStatus(robot, ['取得中...', wifi.line], 2500)
+    await actAndSay(robot, 'ちょっと待ってね', 'ちょっと、まってね', 'lookAround')
 
-    showStatus(
-      robot,
-      [
-        '取得結果:成功',
-        `${LOCATION.name}:${forecast.label}`,
-        forecast.temperature != null ? `気温:${forecast.temperature}度` : '気温:不明',
-      ],
-      2200,
-    )
     try {
-      robot.face.setEmotion(forecast.emotion)
-    } catch (_) {}
-    await wait(600)
-    await actAndSay(robot, forecast.display, forecast.spoken, forecast.motion)
-  } catch (error) {
-    try {
-      robot.face.setEmotion(Emotion.SAD)
-    } catch (_) {}
-    const detail = truncate(String(error && error.message ? error.message : error), 32)
-    showStatus(robot, ['取得結果:失敗', '詳細↓', detail], RESULT_HOLD_MS)
-    await actAndSay(robot, '天気がとれなかったよ', 'てんきが、とれなかったよ', 'shake')
-    trace(`[demo_combo] forecast failed: ${error}\n`)
+      const body = await httpsGetJson(FORECAST_HOST, FORECAST_PATH, FORECAST_HTTPS_PORT)
+      const forecast = buildForecastSpeech(body)
+
+      showStatus(
+        robot,
+        [
+          '取得結果:成功',
+          `${LOCATION.name}:${forecast.label}`,
+          forecast.temperature != null ? `気温:${forecast.temperature}度` : '気温:不明',
+        ],
+        2200,
+      )
+      try {
+        robot.face.setEmotion(forecast.emotion)
+      } catch (_) {}
+      await wait(600)
+      await actAndSay(robot, forecast.display, forecast.spoken, forecast.motion)
+    } catch (error) {
+      try {
+        robot.face.setEmotion(Emotion.SAD)
+      } catch (_) {}
+      const detail = truncate(String(error && error.message ? error.message : error), 32)
+      showStatus(robot, ['取得結果:失敗', '詳細↓', detail], RESULT_HOLD_MS)
+      await actAndSay(robot, '天気がとれなかったよ', 'てんきが、とれなかったよ', 'shake')
+      trace(`[demo_combo] forecast failed: ${error}\n`)
+    }
+  } finally {
+    await restoreNeutral(robot)
   }
 }
 
@@ -471,6 +488,7 @@ export function onContextCreated(robot) {
       'ながくてのてんきを、おしらせするよ',
       'nod',
     )
+    await restoreNeutral(robot)
   })
 
   Timer.set(
