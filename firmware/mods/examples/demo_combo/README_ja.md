@@ -1,36 +1,32 @@
 # demo_combo
 
 Open-Meteo から東京の天気予報を取得してしゃべるひな形 MOD です。
-API キーは不要です。Wi-Fi 接続が必要です。
 
-実機で HTTPS/TLS 診断が落ちることがあるため、診断は Wi-Fi / IP のみです。
-天気取得は平文 HTTP（`http://api.open-meteo.com`）を使います。
+## 再起動ループ対策
+
+起動時は通信もしません。ドロワーから手動実行します。
+起動直後に `版:fetch-status-1` と出れば最新です。
 
 ## 操作
 
 | 操作 | 動作 |
 | --- | --- |
-| 起動約2.5秒後 | ドロワーが自動で開く |
-| 起動約5秒後 | Wi-Fi/IP 診断のあと、HTTP で天気をしゃべる |
-| ドロワー「天気」 | 診断 → 天気予報 |
-| ドロワー「診断」 | Wi-Fi/IP 診断だけ（吹き出し） |
+| 起動 | `版:fetch-status-1` / `起動OK` を表示するだけ |
+| ドロワー「診断」 | Wi-Fi 状態のみ確認 |
+| ドロワー「天気」 | 取得成否を吹き出しで明示 → 成功ならしゃべる |
 
-診断の見方（先頭行）:
+天気の吹き出し例:
 
-1. `暗号化検査:しない` … TLS/HTTPS の実検査はしない（落ち防止）
-2. `版:diag-wifi-only` … この表示があれば最新MODが入っている
-3. `1.Wi-Fi:OK` / `2.IP:...`
-
-診断結果は約4.5秒間、吹き出しに残します。
-起動直後にも `版:diag-wifi-only` と出ます。出ていなければ古いMODのままです。
+- 成功: `取得結果:成功` / `東京:晴れ` / `気温:24度`
+- 失敗: `取得結果:失敗` / `理由:Wi-Fi未接続` または `理由:HTTP/JSON`
 
 ## インストール
 
-Gallery の「天気予報デモ」から WebSerial で入れ直してください。
+Gallery から入れ直してください。
 
 ```sh
 cd firmware
 npm run mod:m5stackchan_cores3 -- mods/examples/demo_combo/manifest.json
 ```
 
-天気データは [Open-Meteo](https://open-meteo.com/) を利用します。
+天気データは [Open-Meteo](https://open-meteo.com/)（HTTP）を利用します。
