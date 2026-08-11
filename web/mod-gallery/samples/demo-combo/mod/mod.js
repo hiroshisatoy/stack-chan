@@ -10,8 +10,9 @@ const LOCATION = Object.freeze({
   longitude: 139.7671,
 })
 
+// 実機の HTTPS/TLS 診断で落ちることがあるため、天気取得は平文 HTTP を使う
 const FORECAST_URL =
-  'https://api.open-meteo.com/v1/forecast' +
+  'http://api.open-meteo.com/v1/forecast' +
   `?latitude=${LOCATION.latitude}` +
   `&longitude=${LOCATION.longitude}` +
   '&current=temperature_2m,weather_code' +
@@ -86,14 +87,9 @@ function showDiagnosisBalloon(robot, lines, holdMs = DIAGNOSIS_BALLOON_MS) {
   Timer.set(() => robot.ui.hideBalloon(), holdMs)
 }
 
-function looksLikeTlsError(error) {
-  const message = String(error)
-  return /cert|certificate|tls|ssl|untrusted|handshake|ca\d+/i.test(message)
-}
-
 /**
- * Wi-Fi / IP / HTTPS(Open-Meteo) / JSON を段階チェックする。
- * CA 自体の有無は公開 API が無いので、HTTPS 失敗内容から推定する。
+ * 安全な診断: Wi-Fi と IP だけ。
+ * HTTPS は一部端末でハードフォールするため診断からは外す。
  */
 async function diagnoseConnectivity(robot) {
   const lines = []
@@ -101,6 +97,7 @@ async function diagnoseConnectivity(robot) {
 
   if (!network) {
     lines.push('1.Wi-Fi API: 無し')
+    lines.push('3.HTTPS: 診断スキップ')
     return { ok: false, stage: 'network-api', lines }
   }
 
@@ -111,12 +108,14 @@ async function diagnoseConnectivity(robot) {
   } catch (error) {
     lines.push('1.Wi-Fi: 例外')
     lines.push(truncate(String(error), 36))
+    lines.push('3.HTTPS: 診断スキップ')
     return { ok: false, stage: 'wifi-exception', lines, error }
   }
 
   if (ready.status !== 'connected') {
     lines.push(`1.Wi-Fi: ${ready.status}`)
     if (ready.reason) lines.push(truncate(String(ready.reason), 36))
+    lines.push('3.HTTPS: 診断スキップ')
     return { ok: false, stage: 'wifi', lines, ready }
   }
   lines.push('1.Wi-Fi: OK')
@@ -127,43 +126,27 @@ async function diagnoseConnectivity(robot) {
   } catch (error) {
     lines.push('2.IP: 取得失敗')
     lines.push(truncate(String(error), 36))
+    lines.push('3.HTTPS: 診断スキップ')
     return { ok: false, stage: 'ip', lines, error }
   }
   if (!ip) {
     lines.push('2.IP: 無し')
+    lines.push('3.HTTPS: 診断スキップ')
     return { ok: false, stage: 'ip', lines }
   }
   lines.push(`2.IP: ${ip}`)
+  lines.push('3.HTTPS: 診断スキップ')
+  lines.push('(落ち対策で未実施)')
+  return { ok: true, stage: 'ok', lines }
+}
 
-  robot.ui.showBalloon('診断3: HTTPS...')
-  try {
-    const response = await fetch(FORECAST_URL)
-    lines.push(`3.HTTPS: ${response.status}`)
-    if (!response.ok) {
-      lines.push('Open-Meteo応答が異常')
-      return { ok: false, stage: 'http', lines, status: response.status }
-    }
-
-    const body = await response.json()
-    if (!body || !body.current) {
-      lines.push('4.JSON: current無し')
-      return { ok: false, stage: 'json', lines }
-    }
-
-    const temperature = formatTemperature(body.current.temperature_2m)
-    lines.push(temperature != null ? `4.API: OK ${temperature}度` : '4.API: OK')
-    lines.push('(CA/TLSも通過)')
-    return { ok: true, stage: 'ok', lines, body }
-  } catch (error) {
-    lines.push('3.HTTPS: 失敗')
-    lines.push(truncate(String(error), 36))
-    if (looksLikeTlsError(error)) {
-      lines.push('CA不足の可能性(ca176等)')
-    } else {
-      lines.push('DNS/経路/応答を確認')
-    }
-    return { ok: false, stage: 'https', lines, error }
-  }
+async function fetchForecastBody(robot) {
+  robot.ui.showBalloon('HTTPで天気取得...')
+  const response = await fetch(FORECAST_URL)
+  if (!response.ok) throw new Error(`HTTP ${response.status}`)
+  const body = await response.json()
+  if (!body || !body.current) throw new Error('missing current weather')
+  return body
 }
 
 async function say(robot, text) {
@@ -192,14 +175,14 @@ async function fetchAndSpeakForecast(robot) {
   }
 
   try {
-    const forecast = buildForecastSpeech(diagnosis.body)
+    const body = await fetchForecastBody(robot)
+    const forecast = buildForecastSpeech(body)
     robot.face.setEmotion(forecast.emotion)
     await say(robot, forecast.text)
   } catch (error) {
     robot.face.setEmotion(Emotion.SAD)
-    robot.ui.showBalloon('天気の文章化に失敗')
-    Timer.set(() => robot.ui.hideBalloon(), DIAGNOSIS_BALLOON_MS)
-    trace(`[demo_combo] forecast build failed: ${error}\n`)
+    showDiagnosisBalloon(robot, ['天気取得失敗', truncate(String(error), 40), 'HTTP経路を確認'])
+    trace(`[demo_combo] forecast failed: ${error}\n`)
   }
 }
 
@@ -263,6 +246,6 @@ export function onContextCreated(robot) {
 
   Timer.repeat(() => lookAroundOnce(robot), 8000)
 
-  robot.ui.showBalloon('起動後に接続診断→天気')
+  robot.ui.showBalloon('診断はWi-Fi/IPのみ')
   Timer.set(() => robot.ui.hideBalloon(), 2000)
 }
