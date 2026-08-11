@@ -15,11 +15,13 @@ API キーは不要です。Wi-Fi 接続が必要です。
 | ドロワー「天気」 | 診断 → 天気予報 |
 | ドロワー「診断」 | Wi-Fi/IP 診断だけ（吹き出し） |
 
-診断の見方:
+診断の見方（先頭行が重要）:
 
-1. `Wi-Fi: OK` … `connectivity.network.ready` が connected
-2. `IP: ...` … `Net.get('IP')`
-3. `HTTPS: 診断スキップ` … 端末落ち対策のため未実施
+1. `HTTPS診断:スキップ` … TLS診断は端末落ち防止のため未実施
+2. `1.Wi-Fi:OK` … `connectivity.network.ready` が connected
+3. `2.IP:...` … `Net.get('IP')`
+
+診断結果は約4.5秒間、吹き出しに残します。
 
 ## インストール
 
