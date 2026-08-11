@@ -1,1 +1,1 @@
-Mirror of firmware demo_combo. Speaks weather with head motion. Build: speak-motion-1
+Mirror of firmware demo_combo. Kanji balloon + hiragana TTS. Build: kana-balloon-1
