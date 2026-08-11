@@ -1,4 +1,5 @@
 import { Emotion } from 'face-state'
+import { randomBetween } from 'stackchan-util'
 import TextDecoder from 'text/decoder'
 import Timer from 'timer'
 
@@ -17,12 +18,15 @@ const FORECAST_PATH =
   '&daily=weather_code,temperature_2m_max,temperature_2m_min' +
   '&timezone=Asia%2FTokyo&forecast_days=1'
 
-const BUILD_ID = 'nagakute-2h-1'
-const BALLOON_MS = 5000
-const RESULT_HOLD_MS = 4500
+const BUILD_ID = 'speak-motion-1'
+const BALLOON_MS = 4000
+const RESULT_HOLD_MS = 3500
 const HTTP_TIMEOUT_MS = 15000
-const FIRST_FETCH_DELAY_MS = 5000
+const LOOK_AROUND_MS = 5000
+const FIRST_FETCH_DELAY_MS = 8000
 const FETCH_INTERVAL_MS = 2 * 60 * 60 * 1000
+const MOTION_STEP_SEC = 0.35
+const MOTION_STEP_MS = 320
 
 function truncate(text, max = 40) {
   if (typeof text !== 'string') return ''
@@ -39,13 +43,13 @@ function formatTemperature(value) {
 }
 
 function describeWeather(code) {
-  if (code === 0 || code === 1) return { label: '晴れ', emotion: Emotion.HAPPY }
-  if (code === 2 || code === 3) return { label: '曇り', emotion: Emotion.NEUTRAL }
-  if (code >= 51 && code <= 67) return { label: '雨', emotion: Emotion.SAD }
-  if (code >= 71 && code <= 77) return { label: '雪', emotion: Emotion.SAD }
-  if (code >= 80 && code <= 82) return { label: 'にわか雨', emotion: Emotion.SAD }
-  if (code >= 95) return { label: '雷雨', emotion: Emotion.ANGRY }
-  return { label: 'わからない天気', emotion: Emotion.NEUTRAL }
+  if (code === 0 || code === 1) return { label: '晴れ', emotion: Emotion.HAPPY, motion: 'nod' }
+  if (code === 2 || code === 3) return { label: '曇り', emotion: Emotion.NEUTRAL, motion: 'lookAround' }
+  if (code >= 51 && code <= 67) return { label: '雨', emotion: Emotion.SAD, motion: 'lookDown' }
+  if (code >= 71 && code <= 77) return { label: '雪', emotion: Emotion.SAD, motion: 'lookDown' }
+  if (code >= 80 && code <= 82) return { label: 'にわか雨', emotion: Emotion.SAD, motion: 'lookDown' }
+  if (code >= 95) return { label: '雷雨', emotion: Emotion.ANGRY, motion: 'shake' }
+  return { label: 'わからない天気', emotion: Emotion.NEUTRAL, motion: 'nod' }
 }
 
 function buildForecastSpeech(body) {
@@ -56,10 +60,10 @@ function buildForecastSpeech(body) {
   let text = `${LOCATION.name}は${weather.label}`
   if (temperature != null) text += `、${temperature}度`
   text += 'だよ'
-  return { text, emotion: weather.emotion }
+  return { text, emotion: weather.emotion, motion: weather.motion }
 }
 
-function showLines(robot, lines, ms = BALLOON_MS) {
+function showStatus(robot, lines, ms = BALLOON_MS) {
   const text = lines.join('\n')
   trace(`[demo_combo] ${text}\n`)
   try {
@@ -88,9 +92,6 @@ async function checkWifi(robot) {
   }
 }
 
-/**
- * fetch ではなく host の HTTPS クライアントを使う。
- */
 function httpsGetJson(host, path, port = FORECAST_HTTPS_PORT, timeoutMs = HTTP_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
     const networkRoot = globalThis.device && device.network
@@ -171,6 +172,77 @@ function httpsGetJson(host, path, port = FORECAST_HTTPS_PORT, timeoutMs = HTTP_T
   })
 }
 
+async function safeTorque(robot, on) {
+  try {
+    await robot.motion.setTorque(on)
+  } catch (error) {
+    trace(`[demo_combo] torque failed: ${error}\n`)
+  }
+}
+
+async function safePose(robot, rotation, time = MOTION_STEP_SEC) {
+  try {
+    await robot.motion.setPose({ rotation }, time)
+  } catch (error) {
+    trace(`[demo_combo] pose failed: ${error}\n`)
+  }
+}
+
+async function faceFront(robot) {
+  try {
+    robot.motion.lookAway()
+  } catch (_) {}
+  await safeTorque(robot, true)
+  await safePose(robot, { y: 0, p: 0, r: 0 })
+}
+
+async function nod(robot) {
+  await safeTorque(robot, true)
+  await safePose(robot, { y: 0, p: 0.14, r: 0 })
+  await wait(MOTION_STEP_MS)
+  await safePose(robot, { y: 0, p: 0, r: 0 })
+}
+
+async function shakeHead(robot) {
+  await safeTorque(robot, true)
+  await safePose(robot, { y: 0.16, p: 0, r: 0 }, 0.28)
+  await wait(MOTION_STEP_MS)
+  await safePose(robot, { y: -0.16, p: 0, r: 0 }, 0.28)
+  await wait(MOTION_STEP_MS)
+  await safePose(robot, { y: 0, p: 0, r: 0 }, 0.28)
+}
+
+async function lookDown(robot) {
+  await safeTorque(robot, true)
+  await safePose(robot, { y: 0, p: 0.18, r: 0 })
+  await wait(MOTION_STEP_MS)
+}
+
+async function glanceAround(robot) {
+  await safeTorque(robot, true)
+  await safePose(robot, { y: 0.12, p: 0.04, r: 0 }, 0.3)
+  await wait(MOTION_STEP_MS)
+  await safePose(robot, { y: -0.12, p: 0.02, r: 0 }, 0.3)
+  await wait(MOTION_STEP_MS)
+  await safePose(robot, { y: 0, p: 0, r: 0 }, 0.3)
+}
+
+async function playMotion(robot, kind) {
+  if (kind === 'shake') {
+    await shakeHead(robot)
+    return
+  }
+  if (kind === 'lookDown') {
+    await lookDown(robot)
+    return
+  }
+  if (kind === 'lookAround') {
+    await glanceAround(robot)
+    return
+  }
+  await nod(robot)
+}
+
 async function say(robot, text) {
   try {
     robot.ui.showBalloon(truncate(text))
@@ -182,10 +254,27 @@ async function say(robot, text) {
   }
 }
 
+async function actAndSay(robot, text, motion = 'nod') {
+  await faceFront(robot)
+  await playMotion(robot, motion)
+  await say(robot, text)
+}
+
+function lookAroundIdle(robot) {
+  try {
+    const x = randomBetween(0.4, 1.0)
+    const y = randomBetween(-0.4, 0.4)
+    const z = randomBetween(-0.02, 0.2)
+    robot.motion.lookAt([x, y, z])
+  } catch (error) {
+    trace(`[demo_combo] lookAround failed: ${error}\n`)
+  }
+}
+
 async function runDiagnosis(robot) {
   const wifi = await checkWifi(robot)
   const httpsOk = Boolean(globalThis.device && device.network && device.network.https && device.network.https.io)
-  showLines(robot, [
+  showStatus(robot, [
     `版:${BUILD_ID}`,
     wifi.line,
     httpsOk ? 'HTTPS:あり' : 'HTTPS:無し',
@@ -199,18 +288,21 @@ async function runDiagnosis(robot) {
 }
 
 async function runForecast(robot) {
+  await faceFront(robot)
+  await actAndSay(robot, `${LOCATION.name}の天気をみてくるね`, 'nod')
+
   const wifi = await checkWifi(robot)
   if (!wifi.ok) {
     try {
       robot.face.setEmotion(Emotion.SAD)
     } catch (_) {}
-    showLines(robot, ['取得結果:失敗', '理由:Wi-Fi', wifi.line], RESULT_HOLD_MS)
-    await wait(RESULT_HOLD_MS)
+    showStatus(robot, ['取得結果:失敗', '理由:Wi-Fi', wifi.line], RESULT_HOLD_MS)
+    await actAndSay(robot, 'きょうはネットにつながっていないみたい', 'shake')
     return
   }
 
-  showLines(robot, ['取得中(HTTPS)...', wifi.line, LOCATION.name], 2500)
-  await wait(500)
+  showStatus(robot, ['取得中...', wifi.line], 2500)
+  await actAndSay(robot, 'ちょっと待ってね', 'lookAround')
 
   try {
     const body = await httpsGetJson(FORECAST_HOST, FORECAST_PATH, FORECAST_HTTPS_PORT)
@@ -218,33 +310,27 @@ async function runForecast(robot) {
     const temperature = formatTemperature(body.current.temperature_2m)
     const weather = describeWeather(Number(body.current.weather_code))
 
-    showLines(
+    showStatus(
       robot,
       [
         '取得結果:成功',
         `${LOCATION.name}:${weather.label}`,
         temperature != null ? `気温:${temperature}度` : '気温:不明',
       ],
-      RESULT_HOLD_MS,
+      2200,
     )
-    try {
-      robot.face.setEmotion(Emotion.HAPPY)
-    } catch (_) {}
-    await wait(RESULT_HOLD_MS)
-
     try {
       robot.face.setEmotion(forecast.emotion)
     } catch (_) {}
-    await say(robot, forecast.text)
-    showLines(robot, ['取得結果:成功', '発話まで完了'], 2500)
-    await wait(2000)
+    await wait(600)
+    await actAndSay(robot, forecast.text, forecast.motion)
   } catch (error) {
     try {
       robot.face.setEmotion(Emotion.SAD)
     } catch (_) {}
     const detail = truncate(String(error && error.message ? error.message : error), 32)
-    showLines(robot, ['取得結果:失敗', '詳細↓', detail], RESULT_HOLD_MS)
-    await wait(RESULT_HOLD_MS)
+    showStatus(robot, ['取得結果:失敗', '詳細↓', detail], RESULT_HOLD_MS)
+    await actAndSay(robot, '天気がとれなかったよ', 'shake')
     trace(`[demo_combo] forecast failed: ${error}\n`)
   }
 }
@@ -289,9 +375,14 @@ export function onContextCreated(robot) {
     trace(`[demo_combo] drawer failed: ${error}\n`)
   }
 
-  showLines(robot, [`版:${BUILD_ID}`, '長久手の天気', '2時間ごと自動'], 3000)
+  // ステータス表示のみ（デバッグ）
+  showStatus(robot, [`版:${BUILD_ID}`, '発話+動作ON'], 2500)
 
-  // 起動直後は少し待ってから取得し、以降は2時間おき
+  void runExclusive(async () => {
+    await actAndSay(robot, '長久手の天気をお知らせするよ', 'nod')
+  })
+
+  // 挨拶のあと少しおいて初回取得し、以降は2時間おき
   Timer.set(
     () => {
       void runExclusive(() => runForecast(robot))
@@ -299,4 +390,9 @@ export function onContextCreated(robot) {
     FIRST_FETCH_DELAY_MS,
     FETCH_INTERVAL_MS,
   )
+
+  Timer.repeat(() => {
+    if (busy) return
+    lookAroundIdle(robot)
+  }, LOOK_AROUND_MS)
 }
